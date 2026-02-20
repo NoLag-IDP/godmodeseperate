@@ -1,0 +1,411 @@
+--// ETFB Rayfield GUI — God Mode + Fast Take + VIP Bypass + ESP
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local PPS = game:GetService("ProximityPromptService")
+local StarterGui = game:GetService("StarterGui")
+local camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+
+local function showNotification(title, message)
+	StarterGui:SetCore("SendNotification", {
+		Title = title;
+		Text = message;
+		Duration = 4;
+	})
+end
+
+--------------------------------------------------------
+-- GOD MODE
+--------------------------------------------------------
+local isGodmode = false
+local ghostClone, gmConnection, noclipConn, deathConn = nil, nil, nil, nil
+local lastPromptUpdate = 0
+
+local function cleanupGodmode()
+	isGodmode = false
+	if gmConnection then gmConnection:Disconnect() gmConnection = nil end
+	if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+	if deathConn then deathConn:Disconnect() deathConn = nil end
+	local char = player.Character
+	if char then
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if root and ghostClone and ghostClone:FindFirstChild("HumanoidRootPart") then
+			root.CFrame = ghostClone.HumanoidRootPart.CFrame
+		end
+		if char:FindFirstChild("Humanoid") then
+			char.Humanoid.PlatformStand = false
+			camera.CameraSubject = char.Humanoid
+		end
+	end
+	if ghostClone then ghostClone:Destroy() ghostClone = nil end
+end
+
+local function enableGodmode()
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	cleanupGodmode()
+	isGodmode = true
+	char.Archivable = true
+	ghostClone = char:Clone()
+	ghostClone.Name = "GhostDecoy"
+	ghostClone.Parent = workspace
+	char.Archivable = false
+	for _, v in pairs(ghostClone:GetDescendants()) do
+		if v:IsA("BasePart") then
+			v.Transparency = (v.Name:lower():find("root") or v.Name:lower():find("collision")) and 0.5 or 0
+			v.CanCollide = true
+		elseif v:IsA("Decal") or v:IsA("Texture") then
+			v.Transparency = 0
+		end
+	end
+	if char:FindFirstChild("Animate") then char.Animate:Clone().Parent = ghostClone end
+	char.Humanoid.PlatformStand = true
+	camera.CameraSubject = ghostClone.Humanoid
+	noclipConn = RunService.Stepped:Connect(function()
+		if char then
+			for _, v in pairs(char:GetDescendants()) do
+				if v:IsA("BasePart") then v.CanCollide = false end
+			end
+		end
+	end)
+	gmConnection = RunService.Heartbeat:Connect(function()
+		if ghostClone and char and char:FindFirstChild("HumanoidRootPart") then
+			local moveDir = char.Humanoid.MoveDirection
+			ghostClone.Humanoid:Move(moveDir, false)
+			ghostClone.Humanoid.Jump = char.Humanoid.Jump
+			if moveDir.Magnitude > 0 then
+				local targetRot = CFrame.lookAt(ghostClone.HumanoidRootPart.Position, ghostClone.HumanoidRootPart.Position + moveDir)
+				ghostClone.HumanoidRootPart.CFrame = ghostClone.HumanoidRootPart.CFrame:Lerp(targetRot, 0.25)
+			end
+			if tick() - lastPromptUpdate > 0.5 then
+				for _, p in pairs(workspace:GetDescendants()) do
+					if p:IsA("ProximityPrompt") then
+						p.MaxActivationDistance = 25
+						p.RequiresLineOfSight = false
+					end
+				end
+				lastPromptUpdate = tick()
+			end
+			char.HumanoidRootPart.CFrame = ghostClone.HumanoidRootPart.CFrame * CFrame.new(0, -15, 0)
+			char.HumanoidRootPart.Velocity = Vector3.zero
+		else
+			cleanupGodmode()
+		end
+	end)
+	deathConn = char.Humanoid.Died:Connect(cleanupGodmode)
+end
+
+player.CharacterAdded:Connect(function()
+	if isGodmode then task.wait(0.5) enableGodmode() end
+end)
+
+--------------------------------------------------------
+-- FAST TAKE
+--------------------------------------------------------
+local instantTakeConn = nil
+
+local function enableInstantTake()
+	if instantTakeConn then return end
+	instantTakeConn = PPS.PromptButtonHoldBegan:Connect(function(prompt)
+		pcall(function() fireproximityprompt(prompt) end)
+	end)
+end
+
+local function disableInstantTake()
+	if instantTakeConn then
+		instantTakeConn:Disconnect()
+		instantTakeConn = nil
+	end
+end
+
+--------------------------------------------------------
+-- VIP BYPASS
+--------------------------------------------------------
+local vipEnabled = false
+local vipConnection = nil
+local vipBackup = {}
+
+local function getVIP()
+	local map = workspace:FindFirstChild("DefaultMap_SharedInstances", true)
+	if not map then return end
+	return map:FindFirstChild("VIPWalls")
+end
+
+local function backupVIP(vip)
+	vipBackup = {}
+	for _, v in ipairs(vip:GetChildren()) do
+		table.insert(vipBackup, v:Clone())
+	end
+end
+
+local function restoreVIP(vip)
+	vip:ClearAllChildren()
+	for _, v in ipairs(vipBackup) do
+		v:Clone().Parent = vip
+	end
+end
+
+local function enableVIP()
+	local vip = getVIP()
+	if not vip then return end
+	if #vipBackup == 0 then backupVIP(vip) end
+	vipConnection = RunService.Heartbeat:Connect(function()
+		for _, v in ipairs(vip:GetDescendants()) do
+			if v:IsA("BasePart") then v.CanCollide = false end
+			if v:IsA("GuiObject") or v:IsA("Decal") or v:IsA("Texture") or v.Name:lower():match("vip") then
+				pcall(function() v:Destroy() end)
+			end
+		end
+	end)
+end
+
+local function disableVIP()
+	if vipConnection then vipConnection:Disconnect() vipConnection = nil end
+	local vip = getVIP()
+	if vip and #vipBackup > 0 then restoreVIP(vip) end
+end
+
+--------------------------------------------------------
+-- LUCKY BLOCK ESP
+--------------------------------------------------------
+local luckyESPEnabled = false
+local luckyESPConnAdd, luckyESPConnRemove = nil, nil
+
+local function getMainPart(obj)
+	if obj:IsA("BasePart") then return obj end
+	return obj:FindFirstChildWhichIsA("BasePart")
+end
+
+local function getLastWord(name)
+	return name:match("_(%w+)$") or "unknown"
+end
+
+local function addLuckyESP(obj)
+	if obj:FindFirstChild("LuckyESP") then return end
+	local part = getMainPart(obj)
+	if not part then return end
+	local rarity = getLastWord(obj.Name)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "LuckyESP"
+	bb.Size = UDim2.new(0, 70, 0, 18)
+	bb.StudsOffset = Vector3.new(0, 3, 0)
+	bb.AlwaysOnTop = true
+	bb.MaxDistance = math.huge
+	bb.Parent = part
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.new(1, 0, 1, 0)
+	txt.BackgroundTransparency = 1
+	txt.TextScaled = true
+	txt.Font = Enum.Font.GothamBold
+	txt.TextStrokeTransparency = 0
+	txt.TextColor3 = Color3.new(1, 1, 1)
+	txt.Text = rarity
+	txt.Parent = bb
+end
+
+local function removeLuckyESP(obj)
+	local part = getMainPart(obj)
+	if part and part:FindFirstChild("LuckyESP") then
+		part.LuckyESP:Destroy()
+	end
+end
+
+local function enableLuckyESP()
+	local folder = workspace:FindFirstChild("ActiveLuckyBlocks")
+	if not folder then
+		showNotification("Lucky Block ESP", "ActiveLuckyBlocks folder not found!")
+		return
+	end
+	for _, v in ipairs(folder:GetChildren()) do
+		addLuckyESP(v)
+	end
+	luckyESPConnAdd = folder.ChildAdded:Connect(function(v)
+		task.wait(0.2)
+		addLuckyESP(v)
+	end)
+	luckyESPConnRemove = folder.ChildRemoved:Connect(function(v)
+		removeLuckyESP(v)
+	end)
+end
+
+local function disableLuckyESP()
+	if luckyESPConnAdd then luckyESPConnAdd:Disconnect() luckyESPConnAdd = nil end
+	if luckyESPConnRemove then luckyESPConnRemove:Disconnect() luckyESPConnRemove = nil end
+	local folder = workspace:FindFirstChild("ActiveLuckyBlocks")
+	if folder then
+		for _, v in ipairs(folder:GetChildren()) do
+			removeLuckyESP(v)
+		end
+	end
+end
+
+--------------------------------------------------------
+-- BRAINROT ESP
+--------------------------------------------------------
+local brainrotESPEnabled = false
+local brainrotESPConnAdd, brainrotESPConnRemove = nil, nil
+
+local function addBrainrotESP(obj)
+	if obj:FindFirstChild("BrainrotESP") then return end
+	local part = getMainPart(obj)
+	if not part then return end
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "BrainrotESP"
+	bb.Size = UDim2.new(0, 80, 0, 20)
+	bb.StudsOffset = Vector3.new(0, 4, 0)
+	bb.AlwaysOnTop = true
+	bb.MaxDistance = math.huge
+	bb.Parent = part
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.new(1, 0, 1, 0)
+	txt.BackgroundTransparency = 1
+	txt.TextScaled = true
+	txt.Font = Enum.Font.GothamBold
+	txt.TextStrokeTransparency = 0
+	txt.TextColor3 = Color3.fromRGB(255, 150, 50)
+	txt.Text = obj.Name
+	txt.Parent = bb
+end
+
+local function removeBrainrotESP(obj)
+	local part = getMainPart(obj)
+	if part and part:FindFirstChild("BrainrotESP") then
+		part.BrainrotESP:Destroy()
+	end
+end
+
+local function enableBrainrotESP()
+	local folder = workspace:FindFirstChild("ActiveBrainrots")
+	if not folder then
+		showNotification("Brainrot ESP", "ActiveBrainrots folder not found!")
+		return
+	end
+	for _, v in ipairs(folder:GetChildren()) do
+		addBrainrotESP(v)
+	end
+	brainrotESPConnAdd = folder.ChildAdded:Connect(function(v)
+		task.wait(0.2)
+		addBrainrotESP(v)
+	end)
+	brainrotESPConnRemove = folder.ChildRemoved:Connect(function(v)
+		removeBrainrotESP(v)
+	end)
+end
+
+local function disableBrainrotESP()
+	if brainrotESPConnAdd then brainrotESPConnAdd:Disconnect() brainrotESPConnAdd = nil end
+	if brainrotESPConnRemove then brainrotESPConnRemove:Disconnect() brainrotESPConnRemove = nil end
+	local folder = workspace:FindFirstChild("ActiveBrainrots")
+	if folder then
+		for _, v in ipairs(folder:GetChildren()) do
+			removeBrainrotESP(v)
+		end
+	end
+end
+
+--------------------------------------------------------
+-- RAYFIELD GUI
+--------------------------------------------------------
+local Window = Rayfield:CreateWindow({
+	Name = "Escape Tsunami Free Script",
+	Icon = 0,
+	LoadingTitle = "ETFB Script",
+	LoadingSubtitle = "by community",
+	Theme = "Default",
+	DisableRayfieldPrompts = false,
+	DisableBuildWarnings = false,
+	ConfigurationSaving = {
+		Enabled = false,
+	},
+	KeySystem = false,
+})
+
+-- MAIN TAB
+local MainTab = Window:CreateTab("Main", 4483362458)
+
+MainTab:CreateToggle({
+	Name = "God Mode",
+	CurrentValue = false,
+	Flag = "GodMode",
+	Callback = function(state)
+		if state then
+			enableGodmode()
+			enableInstantTake() -- auto-enable fast take with god mode
+			showNotification("GOD MODE ON", "Fast Take also enabled automatically")
+		else
+			cleanupGodmode()
+			disableInstantTake()
+		end
+	end,
+})
+
+MainTab:CreateToggle({
+	Name = "Fast Take",
+	CurrentValue = false,
+	Flag = "FastTake",
+	Callback = function(state)
+		if state then
+			enableInstantTake()
+		else
+			disableInstantTake()
+		end
+	end,
+})
+
+MainTab:CreateToggle({
+	Name = "VIP Bypass",
+	CurrentValue = false,
+	Flag = "VIPBypass",
+	Callback = function(state)
+		if state then
+			enableVIP()
+			showNotification("VIP BYPASS ON", "VIP walls disabled")
+		else
+			disableVIP()
+		end
+	end,
+})
+
+-- ESP TAB
+local ESPTab = Window:CreateTab("ESP", 4483362458)
+
+ESPTab:CreateToggle({
+	Name = "Lucky Block ESP",
+	CurrentValue = false,
+	Flag = "LuckyESP",
+	Callback = function(state)
+		luckyESPEnabled = state
+		if state then
+			enableLuckyESP()
+			showNotification("Lucky Block ESP", "ESP enabled for all lucky blocks")
+		else
+			disableLuckyESP()
+		end
+	end,
+})
+
+ESPTab:CreateToggle({
+	Name = "Brainrot ESP",
+	CurrentValue = false,
+	Flag = "BrainrotESP",
+	Callback = function(state)
+		brainrotESPEnabled = state
+		if state then
+			enableBrainrotESP()
+			showNotification("Brainrot ESP", "ESP enabled for all brainrots")
+		else
+			disableBrainrotESP()
+		end
+	end,
+})
+
+-- Cleanup on gui destroy
+Rayfield.OnDestroy = function()
+	cleanupGodmode()
+	disableInstantTake()
+	disableVIP()
+	disableLuckyESP()
+	disableBrainrotESP()
+end
